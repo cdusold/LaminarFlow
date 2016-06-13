@@ -28,13 +28,19 @@ class CruiseControl():
     `add`, only use direct attributes of that CruiseControl
     instance or variables controlled by it.
     
+    Since TensorFlow objects are not pickleable directly, args
+    and kwargs to `add` have to be easily sanitized, unless you
+    want to do it yourself. More complex sanitization is possible,
+    if somewhat difficult. To sanitize yourself, currently you must
+    create the magic functions in whatever you pass to `add` if
+    it isn't automatically taken care of already.
+    
     More documentation to follow.
     """
 #Constructor
     def __init__(self, save_file_name, unique_identifier = None):
         #collect_variables()
         self._vars = set()
-        self._initialized = set()
         self._var_pkl = list()
         self._file_name = save_file_name
         self.saver = None
@@ -51,37 +57,40 @@ class CruiseControl():
             raise AttributeError("Error: {} already defined.".format(name))
         current = set(tf.all_variables())
         #sanitize
-        sanitized_args = []
-        start = len(self._uuid)
-        for i in args:
-            try:
-                pkl.dumps(i)
-                sanitized_args.append(i)
-            except:
-                restart = i.name[start:].find('/') + start + 1
-                sanitized_args.append(_tf_temp(i.name[restart:i.name.rfind(":")]))
-        #Test keyword args.
+        sanitized_args = [self.sanitize(arg) for arg in args]
+        sanitized_kwargs = {key:self.sanitize(value) for key,value in kwargs.items()}
+        #Test.
         try:
-            pkl.dumps(kwargs)
+            pkl.dumps([sanitized_args,sanitized_kwargs])
         except:
-            raise ValueError("Error: Unable to handle tf objects in keyword args currently.")
+            raise ValueError("Error: Unable to sanitize.")
+        #unsanitize
+        unsanitized_args = [self.unsanitize(arg) for arg in args]
+        unsanitized_kwargs = {key:self.unsanitize(value) for key,value in kwargs.items()}
         with tf.variable_scope(self._uuid):
-            #unsanitize
-            unsanitized_args = []
-            for i in args:
-                if isinstance(i, _tf_temp):
-                    try:
-                        unsanitized_args.append(tf.get_variable(i.name))
-                    except:
-                        end = i.name.find('/')
-                        unsanitized_args.append(getattr(self, i.name[:end]))
-                else:
-                    unsanitized_args.append(i)
             with tf.variable_scope(name):
-                setattr(self, name, function(*unsanitized_args, **kwargs))
+                setattr(self, name, function(*unsanitized_args, **unsanitized_kwargs))
         self._vars |= set(tf.all_variables()) - current
-        self._var_pkl.append([name, function, sanitized_args, kwargs])
+        self._var_pkl.append([name, function, sanitized_args, sanitized_kwargs])
         return self
+#Sanitization
+    def sanitize(self, obj):
+        try:
+            pkl.dumps(i)
+            return i
+        except:
+            start = len(self._uuid)
+            restart = i.name[start:].find('/') + start + 1
+            return _tf_temp(i.name[restart:i.name.rfind(":")])
+    def unsanitize(self, obj):
+        if isinstance(obj, _tf_temp):
+            try:
+                return tf.get_variable(obj.name)
+            except:
+                end = obj.name.find('/')
+                return getattr(self, obj.name[:end])
+        else:
+            return obj
 #Features
     def setFile(self, save_file_name):
         self._file_name = save_file_name
@@ -95,7 +104,7 @@ class CruiseControl():
                 try:
                     variables.append((i.name[restart:i.name.rfind(":")],i.value().eval()))
                 except:
-                    #TODO: Don't do this.
+                    #TODO: Don't do this. Limit exceptions to known expected ones.
                     pass
         with open(self._file_name, "wb") as file:
             pkl.dump(variables, file)
@@ -107,6 +116,7 @@ class CruiseControl():
                 for i in variables:
                     tf.get_variable(i[0]).assign(i[1]).eval(session=self._sess)
         except:
+            #TODO: Don't do this. Limit exceptions to known expected ones.
             pass
 #Serialization
     def __reduce__(self):
@@ -118,12 +128,9 @@ class CruiseControl():
 #Functionality
     def __enter__(self):
         self._sess = tf.Session()
-        uninitialized = self._vars - self._initialized
-        # Fixed in TF 0.9. Upgrade now!
-        #uninitialized = tf.report_uninitialized_variables(self._vars).eval(session=self._sess)
-        self._sess.run(tf.initialize_variables(list(uninitialized)))
+        uninitialized = tf.report_uninitialized_variables(self._vars)
+        self._sess.run(tf.initialize_variables(uninitialized))
         self.load()
-        self._initialized = set(x for x in self._vars)
         return self._sess.__enter__()
     def __exit__(self, *args):
         self.save()
