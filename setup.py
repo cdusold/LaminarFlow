@@ -10,14 +10,14 @@ def read(fname):
 
 setup(
     name = "LaminarFlow",
-    version = "1.0.0.0",
+    version = "1.0.0.1",
     author = "Chris Dusold",
     author_email = "LaminarFlow@ChrisDusold.com",
     description = ("A meta class to wrap and automate TensorFlow."),
     license = read("LICENSE"),
     keywords = "TensorFlow",
     #url = "http://pyspeedup.rtfd.org/",
-    packages=['LaminarFlow'],
+    packages=['laminarflow'],
     long_description=read('README.md'),
     classifiers=[
         "Development Status :: 4 - Beta",
