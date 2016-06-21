@@ -82,8 +82,18 @@ class CruiseControl():
                 setattr(self, name, unsanitized_func(*unsanitized_args, **unsanitized_kwargs))
         self._vars |= set(tf.all_variables()) - current
         self._var_pkl.append([name, sanitized_func, sanitized_args, sanitized_kwargs])
+        if isinstance(getattr(self, name), tf.train.Optimizer):
+            #Initialize slots?
+            pass
         return self
 #Sanitization
+    def removeUUIDandColon(self, name):
+        #start = 3 #len("{0}")
+        name = name[len(self._uuid):].replace(self._uuid, "{0}")
+        #restart = var.name[start:].find('/') + start + 1
+        #restart = name.find('/') + 1
+        #return name[restart:name.rfind(":")]
+        return name[name.find('/') + 1:name.rfind(":")]
     def sanitize(self, obj):
         if hasattr(obj, "__self__"):
             method_self = getattr(obj, "__self__")
@@ -92,28 +102,24 @@ class CruiseControl():
                     return _method_temp(name, obj.__name__)
             for var in self._var:
                 if var is method_self:
-                    start = len(self._uuid)
-                    restart = var.name[start:].find('/') + start + 1
-                    return _method_temp(var.name[restart:var.name.rfind(":")], obj.__name__)
+                    return _method_temp(self.removeUUIDandColon(var.name), obj.__name__)
         try:
             pkl.dumps(obj)
             return obj
         except:
-            start = len(self._uuid)
-            restart = obj.name[start:].find('/') + start + 1
-            return _tf_temp(obj.name[restart:obj.name.rfind(":")])
+            return _tf_temp(self.removeUUIDandColon(obj.name))
     def unsanitize(self, obj):
         if isinstance(obj, _tf_temp):
             try:
-                return tf.get_variable(obj.name)
+                return tf.get_variable(obj.name.format(self._uuid))
             except:
                 end = obj.name.find('/')
                 return getattr(self, obj.name[:end])
         if isinstance(obj, _method_temp):
             try:
-                return getattr(tf.get_variable(obj.name), obj.method_name)
+                return getattr(tf.get_variable(obj.name.format(self._uuid)), obj.method_name)
             except:
-                return getattr(getattr(self, obj.name), obj.method_name)
+                return getattr(getattr(self, obj.name.format(self._uuid)), obj.method_name)
         return obj
 #Features
     def setFile(self, save_file_name):
@@ -121,12 +127,10 @@ class CruiseControl():
 #Values
     def save(self, save_file_name = None):
         variables = []
-        start = len(self._uuid)
         for i in self._vars:
-            restart = i.name[start:].find('/') + start + 1
             if tf.is_variable_initialized(i).eval():
                 try:
-                    variables.append((i.name[restart:i.name.rfind(":")],i.value().eval()))
+                    variables.append((self.removeUUIDandColon(i.name),i.value().eval()))
                 except:
                     #TODO: Don't do this. Limit exceptions to known expected ones.
                     pass
@@ -136,12 +140,16 @@ class CruiseControl():
         try:
             with open(self._file_name, "rb") as file:
                 variables = pkl.load(file)
-            with tf.variable_scope(self._uuid, reuse=True):
-                for i in variables:
-                    tf.get_variable(i[0]).assign(i[1]).eval(session=self._sess)
         except:
             #TODO: Don't do this. Limit exceptions to known expected ones.
-            pass
+            return
+        with tf.variable_scope(self._uuid, reuse=True):
+            for i in variables:
+                try:
+                    tf.get_variable(i[0].format(self._uuid)).assign(i[1]).eval(session=self._sess)
+                except ValueError as msg:
+                    #print(str(msg))
+                    pass
 #Serialization
     def __reduce__(self):
         return (CruiseControl, (self._file_name,), self._var_pkl)
@@ -181,3 +189,9 @@ class CruiseControl():
     def __exit__(self, *args):
         self.save()
         return self._sess.__exit__(*args)
+    def run(self, *args, **kwargs):
+        """
+        This provides Session.run access to the CruiseControlled sesion.
+        """
+        with self:
+            return self._sess.run(*args, **kwargs)
