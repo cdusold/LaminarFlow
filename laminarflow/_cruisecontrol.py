@@ -86,6 +86,11 @@ class CruiseControl():
             #Initialize slots?
             pass
         return self
+    def last_added(self):
+        try:
+            return getattr(self, self._var_pkl[-1][0])
+        except:
+            return None
 #Sanitization
     def removeUUIDandColon(self, name):
         #start = 3 #len("{0}")
@@ -122,8 +127,9 @@ class CruiseControl():
                 return getattr(getattr(self, obj.name.format(self._uuid)), obj.method_name)
         return obj
 #Features
-    def setFile(self, save_file_name):
+    def set_file(self, save_file_name):
         self._file_name = save_file_name
+    self.setFile = self.set_file
 #Values
     def save(self, save_file_name = None):
         variables = []
@@ -134,10 +140,14 @@ class CruiseControl():
                 except:
                     #TODO: Don't do this. Limit exceptions to known expected ones.
                     pass
+        if save_file_name is None:
+            save_file_name = self._file_name
         with open(self._file_name, "wb") as file:
             pkl.dump(variables, file)
     def load(self, save_file_name = None):
         try:
+            if save_file_name is None:
+                save_file_name = self._file_name
             with open(self._file_name, "rb") as file:
                 variables = pkl.load(file)
         except:
@@ -150,6 +160,9 @@ class CruiseControl():
                 except ValueError as msg:
                     #print(str(msg))
                     pass
+    def transfer_from(self, save_file_name):
+        self.load(save_file_name)
+        #yes, this is just an alias for readability sake, and to force a file name.
 #Serialization
     def __reduce__(self):
         return (CruiseControl, (self._file_name,), self._var_pkl)
