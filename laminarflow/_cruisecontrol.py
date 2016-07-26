@@ -129,7 +129,7 @@ class CruiseControl():
 #Features
     def set_file(self, save_file_name):
         self._file_name = save_file_name
-    self.setFile = self.set_file
+    setFile = set_file
 #Values
     def save(self, save_file_name = None):
         variables = []
