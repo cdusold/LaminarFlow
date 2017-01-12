@@ -10,7 +10,7 @@ def read(fname):
 
 setup(
     name = "LaminarFlow",
-    version = "1.2.1.1",
+    version = "1.3.0.0",
     author = "Chris Dusold",
     author_email = "LaminarFlow@ChrisDusold.com",
     description = ("A meta class to wrap and automate TensorFlow."),

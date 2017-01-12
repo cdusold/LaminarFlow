@@ -51,19 +51,27 @@ class CruiseControl():
         self._vars = set()
         self._var_pkl = list()
         self._file_name = save_file_name
-        self.saver = None
         self._uuid = unique_identifier if unique_identifier else hex(id(self))[2:]
-        try:
-            with tf.variable_scope(self._uuid):
-                with tf.variable_scope(self._uuid):
-                    tf.get_variable("initialized",shape=[1])
-        except:
-            raise NameError("Error: {} is an invalid unique identifier.".format(self._uuid))
+        self._g = tf.Graph()
+        with self._g.as_default():
+            while True:
+                try:
+                    with tf.variable_scope(self._uuid):
+                        with tf.variable_scope(self._uuid):
+                            tf.get_variable("initialized",shape=[1])
+                    break
+                except:
+                    if unique_identifier is not None:
+                        raise NameError("Error: {} is an invalid unique identifier.".format(self._uuid))
+                    self._uuid += "0"
+        self._sess = None
+        self._opened = 0
 #Structure
     def add(self, name, function, *args, **kwargs):
+        self._sess = None
         if hasattr(self, name):
             raise AttributeError("Error: {} already defined.".format(name))
-        current = set(tf.all_variables())
+        current = set(self._g.get_collection("variables"))
         #sanitize
         sanitized_args = [self.sanitize(arg) for arg in args]
         sanitized_kwargs = {key:self.sanitize(value) for key,value in kwargs.items()}
@@ -77,10 +85,11 @@ class CruiseControl():
         unsanitized_func = self.unsanitize(function)
         unsanitized_args = [self.unsanitize(arg) for arg in args]
         unsanitized_kwargs = {key:self.unsanitize(value) for key,value in kwargs.items()}
-        with tf.variable_scope(self._uuid):
-            with tf.variable_scope(name):
-                setattr(self, name, unsanitized_func(*unsanitized_args, **unsanitized_kwargs))
-        self._vars |= set(tf.all_variables()) - current
+        with self._g.as_default():
+            with tf.variable_scope(self._uuid):
+                with tf.variable_scope(name):
+                    setattr(self, name, unsanitized_func(*unsanitized_args, **unsanitized_kwargs))
+        self._vars |= set(self._g.get_collection("variables")) - current
         self._var_pkl.append([name, sanitized_func, sanitized_args, sanitized_kwargs])
         if isinstance(getattr(self, name), tf.train.Optimizer):
             #Initialize slots?
@@ -145,6 +154,9 @@ class CruiseControl():
         with open(self._file_name, "wb") as file:
             pkl.dump(variables, file)
     def load(self, save_file_name = None):
+        """
+        Must be done from within a with block.
+        """
         try:
             if save_file_name is None:
                 save_file_name = self._file_name
@@ -152,6 +164,7 @@ class CruiseControl():
                 variables = pkl.load(file)
         except:
             #TODO: Don't do this. Limit exceptions to known expected ones.
+            #print("Unable to load pkl file.")
             return
         with tf.variable_scope(self._uuid, reuse=True):
             for i in variables:
@@ -190,18 +203,33 @@ class CruiseControl():
         self._sess.run(tf.initialize_variables(uninitialized))
     '''
 #Functionality
+    @property
+    def sess(self):
+        if self._opened:
+            return self._sess
+        with self._g.as_default():
+            self._init = tf.global_variables_initializer()
+        self._sess = tf.Session(graph=self._g)
+        return self._sess
     def __enter__(self):
-        self._sess = tf.Session()
-        #self.initialize_variables()
-        # trying to be smart about initialization seems
-        #  to be a bad idea for some reason?
-        self._sess.run(tf.initialize_all_variables())
-        # We're just going to load values back anyway.
-        self.load()
-        return self._sess.__enter__()
+        sess = self.sess
+        self._opened += 1
+        if self._opened == 1:
+            sess.__enter__()
+            #self.initialize_variables()
+            # trying to be smart about initialization seems
+            #  to be a bad idea for some reason?
+            self._sess.run(self._init)
+            # We're just going to load values back anyway.
+            self.load()
+            return self
+        else:
+            return self
     def __exit__(self, *args):
         self.save()
-        return self._sess.__exit__(*args)
+        self._opened -= 1
+        if self._opened == 0:
+            return self._sess.__exit__(*args)
     def run(self, *args, **kwargs):
         """
         This provides Session.run access to the CruiseControlled sesion.
